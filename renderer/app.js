@@ -125,28 +125,79 @@
     });
   }
 
+  // Окно с несколькими вариантами. options: [{ value, title, text, primary }]; возвращает value или null (отмена).
+  function uiChoose(title, message, options, cancelLabel = 'Отмена') {
+    return new Promise((resolve) => {
+      const ov = document.createElement('div');
+      ov.className = 'cfm-overlay';
+      ov.innerHTML = `<div class="cfm cfm-wide" role="dialog" aria-modal="true">
+        <div class="cfm-icon">${icon('info')}</div>
+        <h3>${esc(title)}</h3>
+        <p>${esc(message)}</p>
+        <div class="cfm-options">${options.map((o, i) => `<button class="btn ${o.primary ? 'primary' : 'ghost'} cfm-option" data-i="${i}"><b>${esc(o.title)}</b><small>${esc(o.text || '')}</small></button>`).join('')}</div>
+        <div class="cfm-actions"><button class="btn ghost" data-i="-1">${esc(cancelLabel)}</button></div>
+      </div>`;
+      const done = (v) => { document.removeEventListener('keydown', onKey, true); ov.classList.add('out'); setTimeout(() => ov.remove(), 180); resolve(v); };
+      const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(null); } };
+      ov.addEventListener('click', (e) => {
+        if (e.target === ov) return done(null);
+        const b = e.target.closest('[data-i]');
+        if (b) { const i = Number(b.dataset.i); done(i >= 0 ? options[i].value : null); }
+      });
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(ov);
+    });
+  }
+
   /* --------------------- язык и режим панели -------------------- */
   const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  // Плавная смена: новый вид проявляется поверх старого (View Transitions). Без поддержки или при reduce-motion меняется сразу.
+  function animated(fn) {
+    const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (document.startViewTransition && !reduce) document.startViewTransition(() => { fn(); syncSegs(); });
+    else fn();
+  }
+  // Ползунок под выбранным пунктом переключателя скользит к новой кнопке.
+  function syncSegs() {
+    $$('.seg').forEach((seg) => {
+      let ind = seg.querySelector(':scope > .seg-ind');
+      const fresh = !ind;
+      if (fresh) { ind = document.createElement('span'); ind.className = 'seg-ind no-anim'; seg.prepend(ind); }
+      seg.classList.add('has-ind');
+      const btn = seg.querySelector(':scope > button.active');
+      if (!btn) { ind.style.width = '0px'; return; }
+      ind.style.width = btn.offsetWidth + 'px';
+      ind.style.transform = `translateX(${btn.offsetLeft}px)`;
+      if (fresh) { void ind.offsetWidth; ind.classList.remove('no-anim'); }
+    });
+  }
   function applyNav(mode) {
     mode = ['rail', 'wide', 'top', 'pill', 'dock', 'right'].includes(mode) ? mode : 'rail';
     document.body.dataset.nav = mode;
     lsSet('navMode', mode);
+    if (S.settings && S.settings.navMode !== mode && S.settingsLoaded) setSetting({ navMode: mode });
     const rt = $('#railToggle');
     if (rt) { const t = mode === 'wide' ? 'Свернуть панель' : 'Показать подписи'; rt.title = t; rt.setAttribute('aria-label', t); }
     $$('[data-nav-choice]').forEach((b) => b.classList.toggle('active', b.dataset.navChoice === mode));
+    syncSegs();
   }
   function applyLang(l) {
     window.I18N.setLang(l);
     const lb = $('#langLabel'); if (lb) lb.textContent = window.I18N.lang.toUpperCase();
     $$('[data-lang-choice]').forEach((b) => b.classList.toggle('active', b.dataset.langChoice === window.I18N.lang));
     PAGE_TITLES_SYNC();
+    syncSegs();
   }
   function PAGE_TITLES_SYNC() { const t = $('#pageTitle'); if (t && PAGE_TITLES[S.page]) t.textContent = PAGE_TITLES[S.page]; }
 
   /* ------------------------------ навигация --------------------------- */
-  function go(page) {
+  const PAGES = ['home', 'builds', 'packs', 'mods', 'horizon', 'accounts', 'settings'];
+  function go(page, opts = {}) {
+    if (!PAGES.includes(page)) page = 'home';
     S.page = page;
+    // Запоминаем, где ты был: при следующем запуске лаунчер откроется на этой же странице.
+    if (opts.remember !== false) { lsSet('lastPage', page); if (S.settingsLoaded) setSetting({ lastPage: page }); }
     document.body.dataset.page = page;
     $$('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + page));
     $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.page === page));
@@ -158,6 +209,7 @@
     if (page === 'horizon') refreshHorizon();
     if (page === 'accounts') renderAccounts();
     if (page === 'settings') renderSettings();
+    syncSegs();
   }
 
   /* ------------------------------ аватары ----------------------------- */
@@ -350,7 +402,7 @@
   const HZM_EMPTY = {
     mod: 'В реестре Horizon пока нет модов, которые он умеет запускать.',
     resourcepack: 'Ресурспаков для Horizon пока нет в реестре.',
-    shader: 'Шейдеров для Horizon пока нет в реестре.',
+    shader: 'В реестре Horizon шейдеров пока нет. Переключи источник на Modrinth: шейдерпаки (BSL, Complementary и другие) ставятся оттуда в папку shaderpacks.',
     'native-mod': 'Нативных модов в реестре пока нет.',
   };
 
@@ -364,15 +416,46 @@
     if (!r || !r.supported || !r.mods || !r.mods.length) { el.hidden = true; renderHzmInstalled(); return; }
     const busy = !!HZM.busy || r.busy;
     el.hidden = false;
+    const offNote = r.off && r.off.length ? ` Не входят в сборку: ${esc(r.off.join(', '))}.` : '';
     el.innerHTML = r.built
-      ? `<span class="hzn-text">${icon('check')}<span>Игра собрана с нативными модами: ${esc(r.mods.join(', '))}. Они работают при запуске Horizon.</span></span><button class="btn ghost sm" data-hzn-build="1" ${busy ? 'disabled' : ''}>${icon('refresh')}Пересобрать</button>`
-      : `<span class="hzn-text">${icon('info')}<span>Нативные моды (${esc(r.mods.join(', '))}) пока не в игре. Лаунчер соберёт Horizon вместе с ними: скачается Rust (около 2 ГБ), первая сборка займёт 10–30 минут.</span></span><button class="btn primary sm" data-hzn-build="0" ${busy || !r.installedGame ? 'disabled' : ''}>${icon('play')}Собрать игру с модами</button>`;
+      ? `<span class="hzn-text">${icon('check')}<span>Игра собрана с нативными модами: ${esc(r.mods.join(', '))}. Они работают при запуске Horizon.${offNote}</span></span><button class="btn ghost sm" data-hzn-build="1" ${busy ? 'disabled' : ''}>${icon('refresh')}Пересобрать</button>`
+      : `<span class="hzn-text">${icon('info')}<span>Нативные моды (${esc(r.mods.join(', '))}) пока не в игре. Лаунчер соберёт Horizon вместе с ними: скачается Rust (около 2 ГБ), первая сборка займёт 10–30 минут.${offNote}</span></span><button class="btn primary sm" data-hzn-build="0" ${busy || !r.installedGame ? 'disabled' : ''}>${icon('play')}Собрать игру с модами</button>`;
     renderHzmInstalled();
   }
 
+  // Сборка игры с нативными модами. Сначала проверяем, можно ли собрать выбранные моды вместе: у каждого нативного
+  // мода своя «привязка» к версии Horizon, и моды с разными привязками в одну игру не собираются.
   async function hznBuild(force) {
     if (HZM.busy) return;
-    const ok = await uiConfirm('Нативные моды — это код, который встраивается в игру и работает с твоими правами на компьютере (не в песочнице). Ставь только моды, которым доверяешь.\n\nЛаунчер скачает Rust и исходники Horizon и соберёт игру с твоими модами. Это 10–30 минут и несколько ГБ места. Продолжить?', { danger: true, title: 'Собрать игру с нативными модами', ok: 'Доверяю, собрать' });
+    HZM.busy = 'native-plan';
+    hznRender();
+    let plan;
+    try { plan = await api.horizon.native.plan(); } catch (e) { plan = { ok: false, error: String((e && e.message) || e) }; }
+    HZM.busy = '';
+    hznRender();
+    if (!plan.ok) { toast(plan.error || 'Не удалось проверить моды', 'error'); return; }
+    let allowMismatch = false;
+    if (plan.conflict) {
+      const nm = (id) => plan.names[id] || id;
+      const opts = plan.groups.map((g, i) => ({
+        value: { ids: g.mods }, primary: i === 0,
+        title: `${g.mods.length} ${g.mods.length === 1 ? 'мод' : 'мод(ов)'} · Horizon ${g.short}${i === 0 ? ' · рекомендуется' : ''}`,
+        text: g.mods.map(nm).join(', ') + (g.tooNew && g.tooNew.length ? `. Не подойдут: ${g.tooNew.map(nm).join(', ')}` : ''),
+      }));
+      opts.push({ value: { all: true }, title: 'Собрать все моды на самой новой версии', text: 'Старые моды могут не примениться или не скомпилироваться. Если сборка упадёт, выбери один из наборов выше.' });
+      const pick = await uiChoose('Эти моды не собираются вместе',
+        `Нативные моды привязаны к разным версиям Horizon (${plan.groups.map((g) => g.short).join(', ')}). В одну игру собираются только моды одной версии. Остальные останутся установленными, но в игру не войдут: вернуть их можно во вкладке «Установлено».`, opts);
+      if (!pick) return;
+      if (pick.all) allowMismatch = true;
+      else {
+        const sel = await api.horizon.native.select(pick.ids);
+        if (!sel.ok) { toast(sel.error, 'error'); return; }
+        HZM.installed = sel.items;
+        renderHzmInstalled();
+        hznRender();
+      }
+    }
+    const ok = await uiConfirm('Нативные моды — это код, который встраивается в игру и работает с твоими правами на компьютере (не в песочнице). Ставь только моды, которым доверяешь.\n\nЛаунчер скачает Rust и исходники Horizon и соберёт игру с твоими модами. Первый раз это 10–30 минут и несколько ГБ места. Продолжить?', { danger: true, title: 'Собрать игру с нативными модами', ok: 'Доверяю, собрать' });
     if (!ok) return;
     HZM.busy = 'native-build';
     $('#hzmBarWrap').hidden = false;
@@ -380,12 +463,17 @@
     $('#hzmStatus').textContent = 'Подготовка сборки…';
     hznRender();
     try {
-      const r = await api.horizon.native.build(!!force);
+      const r = await api.horizon.native.build({ force: !!force, allowMismatch });
       if (!r.ok) {
         toast(`Сборка не удалась: ${r.error}`, 'error');
         const bad = r.badMod && HZM.installed.find((x) => x.id === r.badMod && x.kind === 'native-mod');
-        if (bad && await uiConfirm(`Мод «${bad.name}» не подходит к этой версии Horizon и ломает сборку. Удалить его и собрать игру без него?`, { danger: true, title: 'Несовместимый мод', ok: 'Удалить и собрать' })) {
-          const rm = await api.horizon.mods.remove(bad.id);
+        if (r.conflict) {
+          HZM.busy = ''; $('#hzmBarWrap').hidden = true; $('#hzmStatus').textContent = '';
+          hznRender();
+          return hznBuild(!!force);
+        }
+        if (bad && await uiConfirm(`Мод «${bad.name}» не подходит к этой версии Horizon и ломает сборку. Убрать его из сборки (он останется установленным) и собрать игру без него?`, { danger: true, title: 'Несовместимый мод', ok: 'Убрать и собрать' })) {
+          const rm = await api.horizon.mods.toggle(bad.id, false);
           if (rm.ok) { HZM.installed = rm.items; HZM.busy = ''; $('#hzmBarWrap').hidden = true; $('#hzmStatus').textContent = ''; renderHzmInstalled(); hznRender(); return hznBuild(!!force); }
           toast(rm.error, 'error');
         } else if (r.logPath) api.horizon.native.openLog();
@@ -411,7 +499,9 @@
       .sort(sorters[HZM.sort] || sorters.downloads);
   }
 
-  const hzmMrMode = () => HZM.kind === 'resourcepack' && HZM.src === 'modrinth';
+  const hzmMrKind = () => HZM.kind === 'resourcepack' || HZM.kind === 'shader';
+  const hzmMrMode = () => hzmMrKind() && HZM.src === 'modrinth';
+  const hzmMrPlaceholder = () => (HZM.kind === 'shader' ? 'Поиск шейдеров на Modrinth…' : 'Поиск ресурспаков на Modrinth…');
   const hzmAll = () => HZM.items.concat(HZM.mr);
   // Нативные моды живут во вкладке «Моды» вместе с обычными (у них своя метка «Нативный»).
   const hzmInKind = (m) => (HZM.kind === 'mod' ? (m.kind === 'mod' || m.kind === 'native-mod') : m.kind === HZM.kind);
@@ -498,10 +588,12 @@
     if (!grid) return;
     if (HZM.kind === 'bundled') { renderHzmBundled(grid, notice); return; }
     const search = $('#hzmSearch');
-    if (search) search.placeholder = hzmMrMode() ? 'Поиск ресурспаков на Modrinth…' : 'Название, автор или описание…';
+    if (search) search.placeholder = hzmMrMode() ? hzmMrPlaceholder() : 'Название, автор или описание…';
     if (hzmMrMode()) {
       notice.classList.toggle('hzm-warn', false);
-      notice.innerHTML = `${icon('info')}<span>Ресурспаки с Modrinth, сделанные для Minecraft ${esc(HZM.game)}. Ставятся в папку игры, включи их в игре на экране ресурспаков. Старые паки могут работать не полностью.</span>`;
+      notice.innerHTML = HZM.kind === 'shader'
+        ? `${icon('info')}<span>Шейдеры с Modrinth (Iris/OptiFine .zip): BSL, Complementary, Photon и другие. Ставятся в папку shaderpacks, выбери шейдер в игре на странице шейдеров. Не все паки поддерживает рендер Horizon: если что-то не заработало, попробуй другой.</span>`
+        : `${icon('info')}<span>Ресурспаки с Modrinth, сделанные для Minecraft ${esc(HZM.game)}. Ставятся в папку игры, включи их в игре на экране ресурспаков. Старые паки могут работать не полностью.</span>`;
       if (HZM.mrLoading) { grid.innerHTML = `<div class="mod-empty"><span class="mod-empty-icon">${icon('coffee')}</span><b>Ищу на Modrinth…</b></div>`; return; }
       if (HZM.mrError) { grid.innerHTML = `<div class="mod-empty"><span class="mod-empty-icon">${icon('info')}</span><b>Modrinth не ответил</b><p>${esc(HZM.mrError)}</p><button class="btn primary" data-hzm-retry="mr">${icon('refresh')}Повторить</button></div>`; return; }
       if (!HZM.mr.length) { grid.innerHTML = `<div class="mod-empty"><span class="mod-empty-icon">${icon('search')}</span><b>Ничего не найдено</b><p>Попробуй другое название.</p></div>`; return; }
@@ -545,12 +637,14 @@
       if (m.revoked) state = `Отозван реестром: ${m.revoked}`;
       else if (!m.present) state = 'Файл пропал из папки игры';
       else if (isMod) state = m.enabled ? 'Включён' : 'Выключен';
-      else if (m.kind === 'native-mod') state = HZN_STATE.built ? 'Собран в игру' : 'Установлен · ждёт сборки игры';
+      else if (m.kind === 'native-mod') state = !m.enabled ? 'Не входит в сборку игры' : (HZN_STATE.built ? 'Собран в игру' : 'Установлен · ждёт сборки игры');
       else state = `${HZM_KIND[m.kind].label} · включи в игре`;
-      const toggle = isMod && m.present && !m.revoked
-        ? `<button class="mini-action" data-hzm-toggle="${esc(m.id)}" data-on="${m.enabled ? '0' : '1'}" title="${m.enabled ? 'Выключить' : 'Включить'}">${icon(m.enabled ? 'check' : 'play')}</button>`
+      const switchable = (isMod || m.kind === 'native-mod') && m.present && !m.revoked;
+      const toggleTitle = m.kind === 'native-mod' ? (m.enabled ? 'Не включать в сборку игры' : 'Включить в сборку игры') : (m.enabled ? 'Выключить' : 'Включить');
+      const toggle = switchable
+        ? `<button class="mini-action" data-hzm-toggle="${esc(m.id)}" data-on="${m.enabled ? '0' : '1'}" title="${toggleTitle}">${icon(m.enabled ? 'check' : 'play')}</button>`
         : '';
-      return `<div class="installed-mod ${isMod && !m.enabled ? 'disabled' : ''}">
+      return `<div class="installed-mod ${switchable && !m.enabled ? 'disabled' : ''}">
         <span class="installed-mod-icon">${icon('puzzle')}</span>
         <div class="installed-mod-copy"><b title="${esc(m.name)}">${esc(m.name)}</b><small>v${esc(m.version)} · ${esc(HZM_KIND[m.kind].label)}${m.origin === 'bundled' ? ' · встроенный' : m.origin === 'local' ? ' · свой файл' : ''}</small><span class="installed-state ${m.revoked || !m.present ? 'warn' : ''}">${esc(state)}</span></div>
         ${toggle}
@@ -574,11 +668,15 @@
     renderHzmCatalog();
   }
 
+  let hzmMrSeq = 0;
   async function hzmLoadModrinth(query, quiet = false) {
+    const kind = HZM.kind;
+    const seq = ++hzmMrSeq;
     HZM.mrLoading = !quiet;
     HZM.mrError = '';
     renderHzmCatalog();
-    const r = await api.horizon.mods.modrinth(query);
+    const r = await api.horizon.mods.modrinth(query, kind);
+    if (seq !== hzmMrSeq) return; // пока шёл запрос, выбрали другую вкладку или ввели другой текст
     HZM.mrLoading = false;
     if (!r.ok) HZM.mrError = r.error;
     else HZM.mr = r.items;
@@ -587,6 +685,8 @@
 
   function hzmSetSource(src) {
     HZM.src = src;
+    HZM.shaderSrcPicked = true;
+    setSetting({ hzSrc: src });
     $$('#hzmSource [data-hzm-src]').forEach((b) => b.classList.toggle('active', b.dataset.hzmSrc === src));
     if (hzmMrMode()) hzmLoadModrinth(HZM.query);
     else renderHzmCatalog();
@@ -635,6 +735,12 @@
     if (!r.ok) { toast(r.error, 'error'); return; }
     HZM.installed = r.items;
     renderHzmInstalled();
+    const m = r.items.find((x) => x.id === id);
+    if (m && m.kind === 'native-mod') {
+      hznRender();
+      toast(on ? 'Мод снова входит в сборку. Нажми «Собрать игру с модами», чтобы он заработал.' : 'Мод убран из сборки (он остаётся установленным). Пересобери игру, чтобы изменения вступили в силу.');
+      return;
+    }
     toast(on ? 'Мод включён. Перезапусти игру, чтобы он заработал.' : 'Мод выключен. Перезапусти игру.');
   }
 
@@ -659,11 +765,25 @@
     $('#hzmGrid').hidden = !catalog;
     $('#hzmNotice').hidden = !catalog;
     $('#hzmKinds').hidden = !catalog;
-    $('#hzmSource').hidden = !catalog || HZM.kind !== 'resourcepack';
+    $('#hzmSource').hidden = !catalog || !hzmMrKind();
     $('#hzmSort').hidden = !catalog;
-    $('#hzmSearch').placeholder = catalog ? (hzmMrMode() ? 'Поиск ресурспаков на Modrinth…' : 'Название, автор или описание…') : 'Поиск в установленных…';
+    $('#hzmSearch').placeholder = catalog ? (hzmMrMode() ? hzmMrPlaceholder() : 'Название, автор или описание…') : 'Поиск в установленных…';
+    setSetting({ hzView: view });
     $('#hzmInstalled').hidden = catalog;
     if (!catalog) hzmLoadInstalled();
+  }
+
+  // Вернуть выбранную вкладку каталога Horizon (моды / встроенные / ресурспаки / шейдеры), источник и вид.
+  function hzmRestore() {
+    if (!$('#hzmGrid')) return;
+    const st = S.settings || {};
+    if (['mod', 'bundled', 'resourcepack', 'shader'].includes(st.hzKind)) HZM.kind = st.hzKind;
+    if (['horizon', 'modrinth'].includes(st.hzSrc)) { HZM.src = st.hzSrc; HZM.shaderSrcPicked = true; }
+    $$('#hzmKinds [data-hzm-kind]').forEach((x) => x.classList.toggle('active', x.dataset.hzmKind === HZM.kind));
+    $$('#hzmSource [data-hzm-src]').forEach((x) => x.classList.toggle('active', x.dataset.hzmSrc === HZM.src));
+    hzmSetView(st.hzView === 'installed' ? 'installed' : 'catalog');
+    if (HZM.kind === 'bundled' && !HZM.bundledLoaded) hzmLoadBundled();
+    else if (hzmMrMode()) hzmLoadModrinth(HZM.query);
   }
 
   function hzmWire() {
@@ -677,7 +797,12 @@
       if (!b) return;
       HZM.kind = b.dataset.hzmKind;
       $$('#hzmKinds [data-hzm-kind]').forEach((x) => x.classList.toggle('active', x === b));
-      $('#hzmSource').hidden = HZM.kind !== 'resourcepack';
+      $('#hzmSource').hidden = !hzmMrKind();
+      // В реестре Horizon шейдеров пока нет, поэтому при первом заходе во вкладку сразу показываем Modrinth.
+      if (HZM.kind === 'shader' && !HZM.shaderSrcPicked) { HZM.src = 'modrinth'; HZM.shaderSrcPicked = true; }
+      $$('#hzmSource [data-hzm-src]').forEach((x) => x.classList.toggle('active', x.dataset.hzmSrc === HZM.src));
+      HZM.mr = [];
+      setSetting({ hzKind: HZM.kind, hzSrc: HZM.src });
       if (HZM.kind === 'bundled' && !HZM.bundledLoaded) hzmLoadBundled();
       else if (hzmMrMode()) hzmLoadModrinth(HZM.query);
       else renderHzmCatalog();
@@ -1394,7 +1519,7 @@
         </div>
         <div class="field">
           <label>Панель навигации</label>
-          <div class="seg" id="navSeg"><button data-nav-choice="rail">Компактная (значки)</button><button data-nav-choice="wide">С подписями</button><button data-nav-choice="top">Сверху (вкладки)</button><button data-nav-choice="pill">Капсула сверху</button><button data-nav-choice="dock">Док снизу</button><button data-nav-choice="right">Справа</button></div>
+          <div class="seg" id="navSeg">${[['rail', 'Компактная (значки)'], ['wide', 'С подписями'], ['top', 'Сверху (вкладки)'], ['pill', 'Капсула сверху'], ['dock', 'Док снизу'], ['right', 'Справа']].map(([v, t]) => `<button data-nav-choice="${v}" class="${(document.body.dataset.nav || 'rail') === v ? 'active' : ''}">${t}</button>`).join('')}</div>
           <div class="hint">Как выглядит левая панель: значки, значки с подписями или вкладки сверху</div>
         </div>
       </div>
@@ -1761,11 +1886,12 @@
     $('#btnPick').addEventListener('click', () => go('builds'));
     $('#btnMin').addEventListener('click', () => api.win.minimize());
     $('#btnClose').addEventListener('click', () => api.win.close());
-    $('#langBtn').addEventListener('click', () => applyLang(window.I18N.lang === 'ru' ? 'en' : 'ru'));
-    $('#railToggle').addEventListener('click', () => applyNav(document.body.dataset.nav === 'wide' ? 'rail' : 'wide'));
+    $('#langBtn').addEventListener('click', () => animated(() => applyLang(window.I18N.lang === 'ru' ? 'en' : 'ru')));
+    $('#railToggle').addEventListener('click', () => animated(() => applyNav(document.body.dataset.nav === 'wide' ? 'rail' : 'wide')));
+    window.addEventListener('resize', syncSegs);
     document.addEventListener('click', (e) => {
-      const l = e.target.closest('[data-lang-choice]'); if (l) applyLang(l.dataset.langChoice);
-      const n = e.target.closest('[data-nav-choice]'); if (n) applyNav(n.dataset.navChoice);
+      const l = e.target.closest('[data-lang-choice]'); if (l) animated(() => applyLang(l.dataset.langChoice));
+      const n = e.target.closest('[data-nav-choice]'); if (n) animated(() => applyNav(n.dataset.navChoice));
     });
     $('#themeBtn').addEventListener('click', (e) => { e.stopPropagation(); $('#themeMenu').hidden = !$('#themeMenu').hidden; $('#accMenu').hidden = true; });
     $('#themeOptions').addEventListener('click', async (e) => { const b = e.target.closest('[data-theme-choice]'); if (b) await chooseTheme(b.dataset.themeChoice); });
@@ -1991,7 +2117,11 @@
     applyLang(window.I18N.lang);
     const [settings, sys, accs] = await Promise.all([api.settings.get(), api.sys.info(), api.accounts.list()]);
     S.settings = settings;
+    S.settingsLoaded = true;
     applyTheme(S.settings.theme || 'green');
+    // Режим панели: настройки лаунчера главнее, localStorage остаётся запасным (старые версии хранили только его).
+    if (S.settings.navMode) applyNav(S.settings.navMode); else setSetting({ navMode: lsGet('navMode', 'rail') });
+    hzmRestore();
     enhanceSelects();
     S.sys = sys;
     S.accounts = accs.accounts;
@@ -2003,6 +2133,9 @@
     loadVersions();
     setInterval(() => loadVersions(true), 30 * 60 * 1000);
     api.java.detect(false).then((list) => { S.javas = list; S.javasLoaded = true; if (S.page === 'settings') renderSettings(); });
+    // Открываем ту страницу, на которой лаунчер закрыли в прошлый раз.
+    const last = S.settings.lastPage || lsGet('lastPage', 'home');
+    if (PAGES.includes(last)) go(last, { remember: false });
   }
 
   init();

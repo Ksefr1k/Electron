@@ -988,3 +988,21 @@ body[data-nav="right"] .nav-btn:hover { transform: translateX(-3px); }
 .hzn-panel .hzn-text { display: flex; align-items: flex-start; gap: 10px; min-width: 0; line-height: 1.5; }
 .hzn-panel .hzn-text svg { flex: none; margin-top: 2px; }
 .hzn-panel .btn { flex: none; white-space: nowrap; }
+
+/* окно выбора из нескольких вариантов (набор нативных модов) */
+.cfm.cfm-wide { width: min(560px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto; }
+.cfm-options { display: flex; flex-direction: column; gap: 10px; margin: 0 0 18px; text-align: left; }
+.cfm-option { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; height: auto; padding: 12px 16px; white-space: normal; text-align: left; }
+.cfm-option b { font-size: 14.5px; }
+.cfm-option small { font-size: 12.5px; line-height: 1.45; opacity: .8; font-weight: 400; word-break: break-word; }
+
+/* ---- Анимация переключателей (языки, панель навигации) ---- */
+.seg.has-ind { position: relative; }
+.seg-ind { position: absolute; top: 4px; bottom: 4px; left: 0; width: 0; border-radius: 10px; pointer-events: none; z-index: 0;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 4px 16px var(--accent-glow);
+  transition: transform .38s cubic-bezier(.2,.8,.2,1), width .38s cubic-bezier(.2,.8,.2,1); }
+.seg-ind.no-anim { transition: none; }
+.seg.has-ind > button { position: relative; z-index: 1; background: transparent !important; box-shadow: none !important; transition: color .3s ease; }
+.seg.has-ind > button.active { color: var(--accent-ink); }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .34s; animation-timing-function: cubic-bezier(.2,.8,.2,1); }
+@media (prefers-reduced-motion: reduce) { ::view-transition-old(root), ::view-transition-new(root) { animation: none; } .seg-ind { transition: none; } }
