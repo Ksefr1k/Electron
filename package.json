@@ -1,0 +1,47 @@
+{
+  "name": "my-mc-launcher",
+  "version": "1.16.5",
+  "description": "Свой лаунчер Minecraft Java Edition",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "dependencies": {
+    "adm-zip": "^0.4.13",
+    "minecraft-launcher-core": "^3.18.2",
+    "msmc": "^5.0.5"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.my.mclauncher",
+    "productName": "Electron",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!horizon-bundled/build.py"
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: https://minotar.net https://cdn.modrinth.com; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Electron</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- боковая панель -->
+    <aside class="rail">
+      <div class="logo" title="Electron"><svg viewBox="0 0 32 32" aria-hidden="true"><g class="orbits" fill="none" stroke="currentColor" stroke-width="1.5"><g transform="rotate(0 16 16)"><ellipse cx="16" cy="16" rx="13" ry="5.2"/><circle class="el" cx="29" cy="16" r="1.6" stroke="none"/></g><g transform="rotate(60 16 16)"><ellipse cx="16" cy="16" rx="13" ry="5.2"/><circle class="el" cx="29" cy="16" r="1.6" stroke="none"/></g><g transform="rotate(120 16 16)"><ellipse cx="16" cy="16" rx="13" ry="5.2"/><circle class="el" cx="29" cy="16" r="1.6" stroke="none"/></g></g><circle class="nucleus" cx="16" cy="16" r="2.6" fill="currentColor"/></svg></div>
+      <nav class="nav">
+        <button class="nav-btn active" data-page="home" title="Главная"><i data-icon="home"></i><span class="nav-label">Главная</span></button>
+        <button class="nav-btn" data-page="builds" title="Сборки"><i data-icon="cube"></i><span class="nav-label">Сборки</span></button>
+        <button class="nav-btn" data-page="packs" title="Сборки модов"><i data-icon="layers"></i><span class="nav-label">Сборки модов</span></button>
+        <button class="nav-btn" data-page="mods" title="Моды"><i data-icon="puzzle"></i><span class="nav-label">Моды</span></button>
+        <button class="nav-btn" data-page="horizon" title="Horizon (Rust)"><i data-icon="cpu"></i><span class="nav-label">Horizon (Rust)</span></button>
+        <button class="nav-btn" data-page="accounts" title="Аккаунты"><i data-icon="users"></i><span class="nav-label">Аккаунты</span></button>
+        <button class="nav-btn" data-page="settings" title="Настройки"><i data-icon="gear"></i><span class="nav-label">Настройки</span></button>
+      </nav>
+      <button class="rail-toggle" id="railToggle" title="Показать подписи" aria-label="Показать подписи"><i data-icon="chevron-right"></i></button>
+    </aside>
+
+    <div class="main">
+      <!-- верхняя панель -->
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-name">Electron</span>
+          <span class="brand-page" id="pageTitle">ГЛАВНАЯ</span>
+        </div>
+        <div class="top-right">
+          <button class="lang-btn" id="langBtn" title="Язык интерфейса" aria-label="Язык интерфейса"><span id="langLabel">RU</span></button>
+          <div class="theme-wrap">
+            <button class="theme-trigger" id="themeBtn" title="Сменить тему" aria-label="Сменить тему" aria-haspopup="true">
+              <i data-icon="palette"></i><span>Тема</span><i data-icon="chevron-down" class="theme-chev"></i>
+            </button>
+            <div class="theme-menu menu" id="themeMenu" hidden>
+              <div class="theme-menu-head"><strong>Оформление</strong><small>Выбери настроение лаунчера</small></div>
+              <div class="theme-options" id="themeOptions"></div>
+            </div>
+          </div>
+          <div class="pill-wrap">
+            <button class="pill" id="accPill">
+              <span class="avatar" id="pillAvatar">?</span>
+              <span class="pill-name" id="pillName">Нет аккаунта</span>
+              <i data-icon="chevron-down" class="pill-chev"></i>
+            </button>
+            <div class="menu" id="accMenu" hidden></div>
+          </div>
+          <button class="win-btn" id="btnMin" title="Свернуть"><i data-icon="minus"></i></button>
+          <button class="win-btn close" id="btnClose" title="Закрыть"><i data-icon="x"></i></button>
+        </div>
+      </header>
+
+      <main class="pages">
+        <!-- ГЛАВНАЯ -->
+        <section class="page active" id="page-home">
+          <div class="hero">
+            <div class="eyebrow">MINECRAFT JAVA EDITION</div>
+            <h1>Твой мир.<br /><span class="accent">Твои правила.</span></h1>
+            <p class="lead">Всё готово к новому приключению.</p>
+            <div class="tiles">
+              <button class="tile" data-go="builds">
+                <div class="tile-art art-1"></div>
+                <div class="tile-body">
+                  <div>
+                    <div class="tile-title">Открой новые миры</div>
+                    <div class="tile-sub">Выбор версий</div>
+                  </div>
+                  <span class="round"><i data-icon="chevron-right"></i></span>
+                </div>
+              </button>
+              <button class="tile" data-go="settings">
+                <div class="tile-art art-2"></div>
+                <div class="tile-body">
+                  <div>
+                    <div class="tile-title">Собери свою игру</div>
+                    <div class="tile-sub">Java, память, запуск</div>
+                  </div>
+                  <span class="round"><i data-icon="chevron-right"></i></span>
+                </div>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- СБОРКИ -->
+        <section class="page" id="page-builds">
+          <div class="page-head">
+            <div>
+              <h2>Сборки</h2>
+              <p class="muted" id="buildsSub">Выберите версию Minecraft для запуска</p>
+            </div>
+          </div>
+          <div class="search search-wide">
+            <i data-icon="search"></i>
+            <input id="search" type="text" placeholder="Найти версию: 1.21, 26.3, snapshot…" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="loader-panel">
+            <div class="loader-panel-copy">
+              <strong>Установить загрузчик модов</strong>
+              <span id="loaderTarget">Выберите версию Minecraft ниже, чтобы установить Fabric, Forge, NeoForge или Quilt.</span>
+            </div>
+            <div class="loader-panel-controls">
+              <select id="loaderType" aria-label="Загрузчик модов">
+                <option value="fabric">Fabric — лёгкий и быстрый</option>
+                <option value="forge">Forge — большая библиотека модов</option>
+                <option value="neoforge">NeoForge — новое поколение Forge</option>
+                <option value="quilt">Quilt — совместим с модами Fabric</option>
+              </select>
+              <button class="btn primary" id="btnInstallLoader"><i data-icon="plus"></i>Установить</button>
+            </div>
+            <div class="loader-status hint" id="loaderStatus" aria-live="polite"></div>
+          </div>
+          <div class="chips" id="chips"></div>
+          <div class="vgrid" id="vgrid"></div>
+          <div class="more-wrap"><button class="btn ghost" id="btnMore" hidden>Показать ещё</button></div>
+        </section>
+
+        <!-- МОДПАКИ -->
+        <section class="page" id="page-packs">
+          <div class="page-head"><div><h2>Сборки <span class="accent">модов</span></h2><p class="muted">Готовые сборки из Modrinth. Ставятся одной кнопкой и появляются в «Сборках» как отдельная версия.</p></div></div>
+          <div class="mod-searchbar">
+            <div class="mod-search-input"><i data-icon="search"></i><input id="packsSearch" type="text" placeholder="Например: Fabulously Optimized, All the Mods, RLCraft…" autocomplete="off" spellcheck="false" /><kbd>Enter</kbd></div>
+            <select id="packsSort" aria-label="Сортировка"><option value="downloads">По загрузкам</option><option value="relevance">По релевантности</option><option value="updated">Недавно обновлённые</option><option value="newest">Сначала новые</option></select>
+            <button class="btn primary" id="packsSearchBtn"><i data-icon="search"></i><span>Найти</span></button>
+          </div>
+          <div class="mods-notice" id="packsNotice"><i data-icon="info"></i><span>Поддерживаются сборки на Fabric, Forge, NeoForge и Quilt. Майнкрафт и загрузчик скачаются сами.</span></div>
+          <div class="section-heading"><div><h3 id="packsCatalogTitle">Каталог Modrinth</h3></div><span class="result-count" id="packsCount">—</span></div>
+          <div class="mod-grid" id="packGrid"></div>
+          <div class="pager" id="packsPager"></div>
+        </section>
+
+        <!-- МОДЫ -->
+        <section class="page" id="page-mods" data-mview="catalog">
+          <div class="mods-hero">
+            <div class="mods-title-block">
+              <div class="eyebrow">MODRINTH · LIBRARY</div>
+              <h2 id="modsHeading">Моды <span class="accent">для твоей игры</span></h2>
+              <p class="muted" id="modsSubheading">Ищи, устанавливай и управляй модами прямо из лаунчера. Нужные для мода зависимости ставятся сами.</p>
+            </div>
+            <div class="mod-target-card" id="modTargetCard">
+              <span class="mod-target-icon"><i data-icon="layers"></i></span>
+              <div><small>ТЕКУЩАЯ СБОРКА</small><strong id="modTargetTitle">Загрузка профиля…</strong><span id="modTargetMeta">Проверяю версию и загрузчик</span></div>
+              <button class="icon-btn" id="modsChooseBuild" title="Выбрать сборку"><i data-icon="chevron-right"></i></button>
+            </div>
+          </div>
+          <div class="chips" id="modKindTabs">
+            <button class="chip active" data-mod-kind="mod">Моды</button>
+            <button class="chip" data-mod-kind="shader">Шейдеры</button>
+            <button class="chip" data-mod-kind="resourcepack">Ресурспаки</button>
+          </div>
+          <div class="mods-view-tabs" id="modsViewTabs">
+            <button class="active" data-mview="catalog">Каталог</button>
+            <button data-mview="installed">Установленные <b id="modsInstCount">0</b><em id="modsUpdDot" hidden></em></button>
+          </div>
+          <div class="mod-searchbar">
+            <div class="mod-search-input"><i data-icon="search"></i><input id="modsSearch" type="text" placeholder="Например: Sodium, Iris, map, minimap…" autocomplete="off" spellcheck="false" /><kbd>Enter</kbd></div>
+            <select id="modsSort" aria-label="Сортировка">
+              <option value="relevance">По релевантности</option>
+              <option value="downloads">По загрузкам</option>
+              <option value="updated">Недавно обновлённые</option>
+              <option value="newest">Сначала новые</option>
+            </select>
+            <button class="btn primary" id="modsSearchBtn"><i data-icon="search"></i><span id="modsSearchLabel">Найти моды</span></button>
+          </div>
+          <div class="mods-notice" id="modsNotice"><i data-icon="info"></i><span>Выбери установленный профиль с загрузчиком (Fabric, Forge, NeoForge, Quilt), чтобы искать совместимые моды.</span></div>
+          <div class="mods-layout">
+            <section class="mods-catalog">
+              <div class="section-heading"><div><h3 id="modsCatalogTitle">Каталог Modrinth</h3><p class="muted">Совместимость подбирается автоматически</p></div><span class="result-count" id="modsCount">—</span></div>
+              <div class="mod-grid" id="modGrid"><div class="mod-empty">Сначала выбери сборку с загрузчиком модов.</div></div>
+              <div class="mods-load-more"><button class="btn ghost" id="modsMore" hidden>Показать ещё</button></div>
+              <div class="pager" id="modsPager"></div>
+            </section>
+            <aside class="mods-installed-panel">
+              <div class="section-heading"><div><h3>Установленные</h3><p class="muted" id="modsInstalledSub">Моды в папке игры</p></div><button class="icon-btn" id="modsRefresh" title="Обновить список"><i data-icon="refresh"></i></button></div>
+              <div class="shared-mods-note"><i data-icon="info"></i><span id="modsSharedNote">Сейчас папка модов общая для всех профилей. Используй только совместимые с выбранной версией файлы.</span></div>
+              <div class="mods-tools">
+                <button class="btn ghost sm" id="modsCheckUpd"><i data-icon="refresh"></i><span>Обновления</span></button>
+                <button class="btn primary sm" id="modsUpdAll" hidden><i data-icon="download"></i><span>Обновить все</span></button>
+                <button class="btn ghost sm" id="modsOpenDir" title="Открыть папку сборки"><i data-icon="folder"></i></button>
+                <input id="modsFilter" type="text" placeholder="Фильтр по названию…" autocomplete="off" spellcheck="false" />
+              </div>
+              <details class="mods-copy" id="modsCopy" hidden>
+                <summary>Перенести файлы из другой сборки</summary>
+                <div class="mods-copy-row"><select id="modsCopySrc" aria-label="Откуда копировать"></select><button class="btn ghost sm" id="modsCopyBtn">Скопировать</button></div>
+              </details>
+              <div class="installed-mod-list" id="installedMods"><div class="mod-empty">Загрузка списка модов…</div></div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- HORIZON -->
+        <section class="page" id="page-horizon">
+          <div class="page-head"><div><h2>Minecraft <span class="accent">на Rust</span></h2><p class="muted">Horizon — неофициальный клиент Minecraft Java, переписанный на Rust: нативный, без Java при игре. Нужна твоя копия игры.</p></div></div>
+          <div class="hz-card hz-hero">
+            <div class="hz-top">
+              <div class="hz-ver">
+                <div class="hz-ver-main"><span class="hz-k">Horizon</span><b id="hzTag">не установлен</b></div>
+                <div class="hz-ver-main"><span class="hz-k">Minecraft</span><b id="hzMc">—</b></div>
+                <div class="hz-ver-main"><span class="hz-k">Ресурсы</span><b id="hzPrep">не подготовлены</b></div>
+              </div>
+              <button class="btn primary hz-play" id="hzPlay"><i data-icon="play"></i><span>Играть</span></button>
+            </div>
+            <ol class="hz-steps" id="hzSteps">
+              <li data-step="install"><span class="hz-dot">1</span><div><b>Установка</b><small>Скачать клиент Horizon</small></div></li>
+              <li data-step="prepare"><span class="hz-dot">2</span><div><b>Подготовка</b><small>Один раз, несколько минут</small></div></li>
+              <li data-step="play"><span class="hz-dot">3</span><div><b>Игра</b><small>С выбранным аккаунтом</small></div></li>
+            </ol>
+            <div class="hz-bar" id="hzBarWrap" hidden><div class="hz-bar-fill" id="hzBar"></div></div>
+            <div class="hz-status" id="hzStatus"></div>
+            <div class="row gap hz-actions">
+              <button class="btn ghost" id="hzInstall"><i data-icon="download"></i><span>Установить / обновить</span></button>
+              <button class="btn ghost" id="hzPrepare"><i data-icon="cpu"></i><span>Подготовить</span></button>
+              <button class="btn ghost" id="hzFolder"><i data-icon="folder"></i><span>Папка игры</span></button>
+            </div>
+          </div>
+          <details class="hz-help">
+            <summary><i data-icon="info"></i>Как это работает</summary>
+            <p>Кнопка «Играть» сама установит Horizon и подготовит ресурсы, если это ещё не сделано. Вход идёт с выбранным аккаунтом. Java-моды (Fabric, Forge, NeoForge) здесь не работают, миры лежат отдельно от обычных сборок. Проект молодой, возможны отличия от оригинала.</p>
+          </details>
+
+          <section class="hzm" id="hzm" data-view="catalog">
+            <div class="hzm-head">
+              <div>
+                <h3>Моды для Horizon</h3>
+                <p class="muted">Только то, что Horizon умеет запускать: моды из реестра Horizon, ресурспаки и шейдеры. Java-моды сюда не попадают.</p>
+              </div>
+              <button class="icon-btn" id="hzmRefresh" title="Обновить список"><i data-icon="refresh"></i></button>
+            </div>
+            <div class="hzm-tabs">
+              <div class="chips" id="hzmKinds">
+                <button class="chip active" data-hzm-kind="mod">Моды</button>
+                <button class="chip" data-hzm-kind="bundled">Встроенные</button>
+                <button class="chip" data-hzm-kind="resourcepack">Ресурспаки</button>
+                <button class="chip" data-hzm-kind="shader">Шейдеры</button>
+              </div>
+              <div class="mods-view-tabs" id="hzmViews">
+                <button class="active" data-hzm-view="catalog"><i data-icon="layers"></i>Каталог</button>
+                <button data-hzm-view="installed"><i data-icon="check"></i>Установлено <b id="hzmInstCount">0</b></button>
+              </div>
+            </div>
+            <div class="chips hzm-src" id="hzmSource" hidden><span class="hzm-src-label">Источник</span>
+              <button class="chip active" data-hzm-src="horizon">Horizon</button>
+              <button class="chip" data-hzm-src="modrinth">Modrinth</button>
+            </div>
+            <div class="mod-searchbar" id="hzmSearchBar">
+              <div class="mod-search-input"><i data-icon="search"></i><input id="hzmSearch" type="text" placeholder="Название, автор или описание…" autocomplete="off" spellcheck="false" /></div>
+              <select id="hzmSort" aria-label="Сортировка">
+                <option value="downloads">По загрузкам</option>
+                <option value="updated">Недавно обновлённые</option>
+                <option value="name">По названию</option>
+              </select>
+            </div>
+            <div class="mods-notice hzm-notice" id="hzmNotice"></div>
+            <div class="hz-bar" id="hzmBarWrap" hidden><div class="hz-bar-fill" id="hzmBar"></div></div>
+            <div class="hz-status" id="hzmStatus"></div>
+            <div class="mods-notice hzm-notice hzm-warn hzn-panel" id="hznPanel" hidden></div>
+            <div class="mod-grid" id="hzmGrid"></div>
+            <div class="installed-mod-list" id="hzmInstalled" hidden></div>
+          </section>
+        </section>
+
+        <!-- АККАУНТЫ -->
+        <section class="page" id="page-accounts">
+          <div class="page-head">
+            <div>
+              <h2>Аккаунты</h2>
+              <p class="muted">Лицензионный вход через Microsoft или офлайн-ник</p>
+            </div>
+            <div class="row gap">
+              <button class="btn ghost" id="btnOffline"><i data-icon="plus"></i>Офлайн</button>
+              <button class="btn primary" id="btnMicrosoft"><i data-icon="microsoft"></i><span>Войти через Microsoft</span></button>
+            </div>
+          </div>
+          <div class="acc-grid" id="accGrid"></div>
+        </section>
+
+        <!-- НАСТРОЙКИ -->
+        <section class="page" id="page-settings">
+          <div class="page-head">
+            <div>
+              <h2>Настройки</h2>
+              <p class="muted">Java, оперативная память и параметры запуска</p>
+            </div>
+          </div>
+          <div class="settings" id="settingsBody"></div>
+        </section>
+      </main>
+
+      <!-- нижняя панель запуска -->
+      <footer class="playbar" id="playbar">
+        <div class="pb-icon">
+          <svg viewBox="0 0 64 64" width="56" height="56" aria-hidden="true">
+            <defs>
+              <linearGradient id="gbTop" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9be86a"/><stop offset="1" stop-color="#4aa83a"/></linearGradient>
+              <linearGradient id="gbL" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a47245"/><stop offset="1" stop-color="#6a4426"/></linearGradient>
+              <linearGradient id="gbR" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7d5433"/><stop offset="1" stop-color="#47301a"/></linearGradient>
+            </defs>
+            <ellipse cx="32" cy="60.5" rx="20" ry="3.2" fill="#000" opacity=".3"/>
+            <polygon points="7,19 32,33 32,59 7,45" fill="url(#gbL)"/>
+            <polygon points="57,19 32,33 32,59 57,45" fill="url(#gbR)"/>
+            <polygon points="7,19 32,33 32,41 28.5,38.5 25,42 21,36.5 17,40 13,34 10,36.5 7,31" fill="#4fae3d"/>
+            <polygon points="57,19 32,33 32,41 35.5,38.5 39,42 43,36.5 47,40 51,34 54,36.5 57,31" fill="#37852c"/>
+            <polygon points="32,5 57,19 32,33 7,19" fill="url(#gbTop)"/>
+            <path d="M32 5L57 19L32 33L7 19Z" fill="none" stroke="#d3f8b3" stroke-opacity=".6" stroke-width="1" stroke-linejoin="round"/>
+            <path d="M32 33V59" stroke="#000" stroke-opacity=".22"/>
+            <g fill="#2f7a26" opacity=".55"><rect x="29" y="12" width="3" height="2" transform="rotate(30 30 13)"/><rect x="40" y="18" width="3" height="2" transform="rotate(30 41 19)"/><rect x="21" y="19" width="3" height="2" transform="rotate(30 22 20)"/><rect x="31" y="24" width="3" height="2" transform="rotate(30 32 25)"/></g>
+            <g fill="#3a2414" opacity=".45"><rect x="12" y="43" width="3" height="3"/><rect x="21" y="48" width="3" height="3"/><rect x="46" y="44" width="3" height="3"/><rect x="38" y="52" width="3" height="3"/></g>
+            <g fill="#c9a07a" opacity=".35"><rect x="17" y="50" width="2" height="2"/><rect x="26" y="44" width="2" height="2"/><rect x="50" y="50" width="2" height="2"/></g>
+          </svg>
+        </div>
+        <div class="pb-info">
+          <div class="pb-title" id="pbTitle">Сборка не выбрана</div>
+          <div class="pb-sub" id="pbSub">Откройте вкладку «Сборки», чтобы выбрать версию</div>
+        </div>
+        <div class="pb-sep"></div>
+        <div class="pb-status"><span class="dot" id="pbDot"></span><span id="pbStatus">Ожидание выбора сборки</span></div>
+        <button class="icon-btn" id="btnFolder" title="Открыть папку игры (миры, моды, версии)"><i data-icon="folder"></i></button>
+        <button class="icon-btn" id="btnConsole" title="Консоль игры"><i data-icon="terminal"></i></button>
+        <button class="play" id="btnPlay" disabled><i data-icon="play"></i><span>Играть</span></button>
+        <button class="play-arrow" id="btnPick" title="Сменить сборку"><i data-icon="chevron-right"></i></button>
+        <div class="pb-progress" id="pbProgress"><i id="pbBar"></i></div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- консоль -->
+  <div class="console" id="console" hidden>
+    <div class="console-head">
+      <strong>Консоль игры</strong>
+      <div class="row gap">
+        <button class="btn ghost sm" id="btnClearLog">Очистить</button>
+        <button class="btn ghost sm" id="btnCloseLog">Закрыть</button>
+      </div>
+    </div>
+    <pre class="console-body" id="consoleBody"></pre>
+  </div>
+
+  <!-- модалка офлайн-аккаунта -->
+  <div class="modal" id="modalOffline" hidden>
+    <div class="modal-card">
+      <h3>Офлайн-аккаунт</h3>
+      <p class="muted">Для одиночной игры и серверов без проверки лицензии. Локальный скин можно настроить отдельно.</p>
+      <input id="offlineName" type="text" maxlength="16" placeholder="Ник (3–16 символов)" autocomplete="off" spellcheck="false" />
+      <div class="err" id="offlineErr"></div>
+      <div class="row gap end">
+        <button class="btn ghost" id="offlineCancel">Отмена</button>
+        <button class="btn primary" id="offlineOk">Добавить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- модалка скина -->
+  <div class="modal" id="modalSkin" hidden>
+    <div class="modal-card skin-card">
+      <h3>Скин</h3>
+      <p class="muted" id="skinWho"></p>
+      <div class="skin-body">
+        <div class="skin-preview"><canvas id="skinCanvas" width="128" height="256"></canvas></div>
+        <div class="skin-ctl" id="skinCtl">
+          <div class="seg" id="skinVariant">
+            <button data-variant="classic" class="active">Классика</button>
+            <button data-variant="slim">Тонкие руки</button>
+          </div>
+          <button class="btn ghost" id="skinPick"><i data-icon="folder"></i>Выбрать PNG…</button>
+          <div class="hint" id="skinFile">Файл не выбран. Подойдёт скин 64×64.</div>
+          <button class="btn primary" id="skinApply" disabled>Применить скин</button>
+          <button class="btn danger" id="skinReset">Сбросить скин</button>
+        </div>
+      </div>
+      <div class="skin-note muted" id="skinNote" hidden>
+        <div id="skinNoteText"></div>
+        <button class="btn ghost" id="skinSupport"><i data-icon="plus"></i>Установить поддержку в выбранную сборку</button>
+      </div>
+      <div class="err" id="skinErr"></div>
+      <div class="row gap end"><button class="btn ghost" id="skinClose">Закрыть</button></div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
