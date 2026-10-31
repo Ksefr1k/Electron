@@ -32,7 +32,21 @@ const MINGW = {
 };
 const HORIZON_REPO = 'horizon-rust/horizon';
 const MIXINS_GIT = 'https://github.com/horizon-rust/horizon-mixins';
+// horizon-mixins, который берёт официальный лаунчер Horizon (launcher/src/native_mods.rs, MIXINS_REV). Он новее всех ревизий,
+// на которых сейчас сделаны моды реестра (0d6b103, 3f99a5c), и является их потомком. Старые ревизии не берём: у разных модов
+// они разные, и сборка с «первой попавшейся» ломала остальные моды.
+const MIXINS_REV = '4342a0bfbe71d4d14185528d64e496d6022f16a1';
+const HOOKS_FILE = 'crates/horizon-client/src/game/native_hooks.rs';
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
+
+// Переменные игрока, которые меняют компилятор или флаги сборки: официальный лаунчер их тоже убирает (rust_toolchain.rs).
+const SCRUB_EXACT = new Set(['RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'RUSTDOCFLAGS', 'CARGO_ENCODED_RUSTDOCFLAGS', 'CARGO_INCREMENTAL',
+  'RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO', 'CARGO_HOME']);
+function isScrubbed(name) {
+  const u = String(name).toUpperCase();
+  return SCRUB_EXACT.has(u) || u.startsWith('CARGO_PROFILE_') || u.startsWith('CARGO_TARGET_') || u.startsWith('RUSTUP_')
+    || (u.startsWith('CARGO_BUILD_') && u !== 'CARGO_BUILD_JOBS');
+}
 
 const sha256File = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const exists = (p) => { try { fs.accessSync(p); return true; } catch { return false; } };
@@ -200,17 +214,25 @@ function create({ root, downloadFile, fetchJson, log, note }) {
     return exists(exe) ? { dir: st.dir, key: st.key } : null;
   }
 
+  // Окружение сборки как у официального лаунчера: свой Rust и MinGW, свой CARGO_HOME, без настроек Rust игрока
+  // и со своей временной папкой. Временная папка игрока (C:\\Users\\Имя Фамилия\\AppData\\Local\\Temp) часто с пробелом или
+  // кириллицей, а gcc/as/ld из MinGW-w64 такие пути не открывают: сборка падала на ровном месте.
   function tcEnv(tc, extra = []) {
-    const env = { ...process.env };
+    const env = {};
+    for (const [k, v] of Object.entries(process.env)) if (!isScrubbed(k)) env[k] = v;
     const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') || 'PATH';
     env[pathKey] = [path.join(tc, 'bin'), path.join(tc, 'mingw64', 'bin'), ...extra, env[pathKey] || ''].join(path.delimiter);
     env.RUSTC = path.join(tc, 'bin', 'rustc.exe');
     env.CARGO = path.join(tc, 'bin', 'cargo.exe');
     env.RUST_BACKTRACE = '1';
     env.CARGO_HOME = path.join(R(), 'cargo');
-    for (const k of ['RUSTUP_TOOLCHAIN', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_TARGET_DIR']) delete env[k];
+    env.CARGO_TERM_COLOR = 'never';
+    const tmp = path.join(R(), 'tmp');
+    try { fs.mkdirSync(tmp, { recursive: true }); env.TMP = tmp; env.TEMP = tmp; env.TMPDIR = tmp; } catch {}
     return env;
   }
+  // Cargo читает .cargo/config.toml из папки запуска и всех папок выше: стартуем с корня диска, а проект указываем через --manifest-path.
+  const cargoCwd = () => path.parse(R()).root || R();
 
   async function fetchArchive(url, name, sha, label, pct) {
     const file = path.join(R(), '.dl', name);
@@ -309,12 +331,13 @@ function create({ root, downloadFile, fetchJson, log, note }) {
   }
 
   async function ensureMixins(tc, rev) {
-    const toolsDir = path.join(R(), 'tools', rev || 'head');
+    rev = rev || MIXINS_REV;
+    const toolsDir = path.join(R(), 'tools', rev);
     const bin = path.join(toolsDir, 'bin', 'horizon-mixins.exe');
     if (exists(bin)) return bin;
     note('Сборка horizon-mixins (один раз, пара минут)…', 22);
-    const args = ['install', '--locked', '--git', MIXINS_GIT, ...(rev ? ['--rev', rev] : []), '--root', toolsDir, 'horizon-mixins-cli'];
-    const r = await run(path.join(tc, 'bin', 'cargo.exe'), args, { env: tcEnv(tc), cwd: R(), onLine: (l) => { fs.appendFileSync(buildLog(), l + '\n'); } });
+    const args = ['install', '--locked', '--git', MIXINS_GIT, '--rev', rev, '--root', toolsDir, 'horizon-mixins-cli'];
+    const r = await run(path.join(tc, 'bin', 'cargo.exe'), args, { env: tcEnv(tc), cwd: cargoCwd(), onLine: (l) => { fs.appendFileSync(buildLog(), l + '\n'); } });
     if (r.code !== 0 || !exists(bin)) throw new Error(`horizon-mixins не собрался:\n${r.out}`);
     return bin;
   }
@@ -339,52 +362,162 @@ function create({ root, downloadFile, fetchJson, log, note }) {
     return dir;
   }
 
-  async function resolveCommit(tag, metas) {
-    const api = (ref) => fetchJson(`https://api.github.com/repos/${HORIZON_REPO}/commits/${encodeURIComponent(ref)}`);
-    // Пин ревизии берём у всех модов, у которых он есть (и у хук-точечных тоже): мод тестировался на этом коммите.
-    const pins = [...new Set(metas.filter((m) => m.horizon).map((m) => m.horizon))];
-    if (pins.length) {
-      let best = null;
-      for (const p of pins) {
-        const c = await api(p);
-        const when = Date.parse(c && c.commit && c.commit.committer && c.commit.committer.date) || 0;
-        if (!c || !/^[0-9a-f]{40}$/.test(c.sha || '')) throw new Error(`на GitHub нет ревизии Horizon ${p}`);
-        if (!best || when > best.when) best = { sha: c.sha, when };
-      }
-      return best.sha;
+  // ---- ревизии Horizon ----
+  // Полный SHA коммита по короткому или по тегу. Ответы GitHub кэшируются на диске (коммиты не меняются),
+  // а если лимит API исчерпан, SHA берётся с github.com (там лимита нет).
+  const commitsFile = () => path.join(R(), 'commits.json');
+  const readCommits = () => { try { return JSON.parse(fs.readFileSync(commitsFile(), 'utf8')) || {}; } catch { return {}; } };
+  async function shaFromWeb(ref) {
+    const res = await fetch(`https://github.com/${HORIZON_REPO}/commit/${encodeURIComponent(ref)}.patch`, { signal: AbortSignal.timeout(30000), redirect: 'follow' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const { value } = await reader.read();
+    try { await reader.cancel(); } catch {}
+    const m = /^From ([0-9a-f]{40}) /.exec(Buffer.from(value || []).toString('utf8', 0, 200));
+    if (!m) throw new Error('в ответе нет SHA');
+    return m[1];
+  }
+  async function apiCommit(ref) {
+    const key = String(ref).toLowerCase();
+    const cache = readCommits();
+    if (cache[key]) return cache[key];
+    let rec = null;
+    try {
+      const c = await fetchJson(`https://api.github.com/repos/${HORIZON_REPO}/commits/${encodeURIComponent(ref)}`);
+      if (c && /^[0-9a-f]{40}$/.test(c.sha || '')) rec = { sha: c.sha, when: Date.parse(c.commit && c.commit.committer && c.commit.committer.date) || 0 };
+    } catch (e) { log(`[horizon-native] GitHub API: ${ref}: ${e.message || e}`); }
+    if (!rec) {
+      try { rec = { sha: /^[0-9a-f]{40}$/.test(key) ? key : await shaFromWeb(ref), when: 0 }; }
+      catch (e) { throw new Error(`на GitHub нет ревизии Horizon ${ref} (${e.message || e})`); }
     }
-    // Моды на хук-точках собираются на ревизии установленной версии игры.
-    // Nightly называется `nightly-<дата>-<коммит>`: коммит и есть ревизия игры.
+    cache[key] = rec; cache[rec.sha] = rec;
+    try { fs.mkdirSync(R(), { recursive: true }); fs.writeFileSync(commitsFile(), JSON.stringify(cache)); } catch {}
+    return rec;
+  }
+  // NATIVE_HOOKS_API ревизии: моды на хук-точках собираются на любой ревизии, где он не меньше нужного (docs/native-mods.md).
+  const hooksCache = new Map();
+  async function hooksApiAt(commit) {
+    if (hooksCache.has(commit)) return hooksCache.get(commit);
+    let v = null;
+    try {
+      const res = await fetch(`https://raw.githubusercontent.com/${HORIZON_REPO}/${commit}/${HOOKS_FILE}`, { signal: AbortSignal.timeout(45000) });
+      if (res.ok) { const m = /NATIVE_HOOKS_API\s*:\s*u32\s*=\s*(\d+)/.exec(await res.text()); if (m) v = Number(m[1]); }
+    } catch (e) { log(`[horizon-native] NATIVE_HOOKS_API ${commit.slice(0, 7)}: ${e.message || e}`); }
+    hooksCache.set(commit, v);
+    return v;
+  }
+  // Ревизия установленной версии Horizon: у Nightly она в названии (`nightly-<дата>-<коммит>`), у релиза это тег.
+  async function installedCommit(tag) {
     const nightly = /^nightly-\d{4}-\d{2}-\d{2}-([0-9a-f]{7,40})$/.exec(String(tag));
-    const c = await api(nightly ? nightly[1] : tag).catch(() => null);
-    if (c && /^[0-9a-f]{40}$/.test(c.sha || '')) return c.sha;
-    const hint = metas.find((m) => m.horizon);
-    if (hint) {
-      const h = await api(hint.horizon);
-      if (h && /^[0-9a-f]{40}$/.test(h.sha || '')) return h.sha;
+    return (await apiCommit(nightly ? nightly[1] : tag)).sha;
+  }
+  const short = (sha) => String(sha || '').slice(0, 7);
+
+  // Разбор набора модов: к каким ревизиям привязан каждый и можно ли собрать всё вместе (docs/native-mods.md, «Pinned to a Nightly»).
+  // Мод на хук-точках (`hooks` > 0) не привязывает сборку: он едет на ревизии остальных модов или установленной версии.
+  async function analyze({ tag, mods, only }) {
+    const picked = Array.isArray(only) && only.length ? mods.filter((m) => only.includes(m.id)) : mods;
+    const metas = picked.map((m) => ({ ...m, ...readBundleMeta(m.file) }));
+    const hooked = metas.filter((m) => m.hooks > 0);
+    const pinned = metas.filter((m) => !m.hooks && m.horizon);
+    const loose = metas.filter((m) => !m.hooks && !m.horizon);
+    const byCommit = new Map();
+    for (const m of pinned) {
+      const c = await apiCommit(m.horizon);
+      if (!byCommit.has(c.sha)) byCommit.set(c.sha, { commit: c.sha, short: short(c.sha), when: c.when, mods: [] });
+      byCommit.get(c.sha).mods.push(m.id);
+      m.pinSha = c.sha;
     }
-    throw new Error(`не нашёл ревизию Horizon для версии ${tag}`);
+    const groups = [...byCommit.values()].sort((a, b) => b.mods.length - a.mods.length || b.when - a.when);
+    return { metas, hooked, loose, groups };
+  }
+
+  // Для каждой группы: какие моды на хук-точках в неё входят (их NATIVE_HOOKS_API на этой ревизии достаточен), а какие нет.
+  async function withHooks(an) {
+    const out = [];
+    for (const g of an.groups) {
+      const api = await hooksApiAt(g.commit);
+      const fit = an.hooked.filter((m) => api === null || api >= m.hooks).map((m) => m.id);
+      const skip = an.hooked.filter((m) => api !== null && api < m.hooks).map((m) => m.id);
+      out.push({ ...g, hookMods: fit, tooNew: skip, hooksApi: api, all: [...g.mods, ...fit, ...an.loose.map((m) => m.id)] });
+    }
+    return out;
+  }
+
+  // Предпросмотр сборки для окна: есть ли конфликт ревизий и какие наборы можно собрать.
+  async function plan({ tag, mods }) {
+    const an = await analyze({ tag, mods });
+    const groups = await withHooks(an);
+    return {
+      conflict: groups.length > 1,
+      groups: groups.map((g) => ({ commit: g.commit, short: g.short, mods: g.all, tooNew: g.tooNew })),
+      hooks: an.hooked.map((m) => ({ id: m.id, need: m.hooks })),
+    };
+  }
+
+  // Ревизия, на которой собирается набор. Разные привязки без allowMismatch — ошибка с описанием групп (err.conflict).
+  async function resolveCommit(tag, an, allowMismatch) {
+    const need = an.hooked.reduce((n, m) => Math.max(n, m.hooks), 0);
+    let commit = '';
+    if (an.groups.length > 1) {
+      const groups = await withHooks(an);
+      if (!allowMismatch) {
+        const err = new Error('Выбранные нативные моды сделаны под разные версии Horizon и в одну игру не собираются:\n'
+          + groups.map((g) => `• ${g.short}: ${g.mods.join(', ')}`).join('\n')
+          + '\nВыбери набор, который собрать, или собери всё на самой новой ревизии (может не получиться).');
+        err.conflict = { groups: groups.map((g) => ({ commit: g.commit, short: g.short, mods: g.all, tooNew: g.tooNew })) };
+        throw err;
+      }
+      commit = [...an.groups].sort((a, b) => b.when - a.when)[0].commit;
+    } else if (an.groups.length === 1) {
+      commit = an.groups[0].commit;
+    } else {
+      commit = await installedCommit(tag);
+      if (need) {
+        const api = await hooksApiAt(commit);
+        if (api !== null && api < need) {
+          // Установленная версия старее нужного моду API хуков: берём ревизию, на которой его проверяли.
+          const tested = an.hooked.filter((m) => m.horizon);
+          if (!tested.length) throw new Error(`Моды требуют API хуков ${need}, а в установленном Horizon он ${api}. Обнови Horizon («Установить / обновить»).`);
+          let best = null;
+          for (const m of tested) { const c = await apiCommit(m.horizon); if (!best || c.when > best.when) best = c; }
+          commit = best.sha;
+        }
+      }
+    }
+    if (need) {
+      const api = await hooksApiAt(commit);
+      if (api !== null && api < need) {
+        const bad = an.hooked.filter((m) => m.hooks > api).map((m) => m.id);
+        const err = new Error(`Моды ${bad.join(', ')} используют более новые хук-точки (API ${need}), чем есть в Horizon ${short(commit)} (API ${api}). Убери их из сборки или выбери другой набор.`);
+        if (bad.length === 1) err.badMod = bad[0];
+        throw err;
+      }
+    }
+    return commit;
   }
 
   // mods: [{ id, file, sha256 }], versionDir — папка установленной версии Horizon.
-  async function build({ tag, versionDir, mods, force = false }) {
+  async function build({ tag, versionDir, mods, force = false, allowMismatch = false }) {
     if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Сборка нативных модов в лаунчере работает только на Windows x64.');
     if (!mods.length) throw new Error('Нет установленных нативных модов.');
     fs.mkdirSync(R(), { recursive: true });
     fs.appendFileSync(buildLog(), `\n=== ${new Date().toISOString()} сборка с модами: ${mods.map((m) => m.id).join(', ')} ===\n`);
     note('Проверка модов…', 1);
-    const metas = mods.map((m) => ({ ...m, ...readBundleMeta(m.file) }));
-    const commit = await resolveCommit(tag, metas);
-    fs.appendFileSync(buildLog(), `[сборка] ревизия Horizon: ${commit} (пины модов: ${metas.map((m) => `${m.id}=${m.horizon || '-'}`).join(', ')})\n`);
-    const mixRev = (metas.find((m) => m.mixins) || {}).mixins || '';
+    const an = await analyze({ tag, mods });
+    const metas = an.metas;
+    const commit = await resolveCommit(tag, an, allowMismatch);
+    const mixRev = MIXINS_REV;
+    fs.appendFileSync(buildLog(), `[сборка] ревизия Horizon: ${commit}; horizon-mixins: ${mixRev}; Rust ${RUST_VERSION}\n`
+      + `[сборка] моды: ${metas.map((m) => `${m.id}(пин ${m.horizon ? short(m.horizon) : '-'}${m.hooks ? `, hooks ${m.hooks}` : ''})`).join(', ')}${allowMismatch ? ' [собираем несмотря на разные пины]' : ''}\n`);
     const key = crypto.createHash('sha256')
-      .update([commit, mixRev, RUST_VERSION, ...metas.map((m) => `${m.id}:${sha256File(m.file)}`).sort()].join('|'))
+      .update([commit, mixRev, RUST_VERSION, 'v2', ...metas.map((m) => `${m.id}:${sha256File(m.file)}`).sort()].join('|'))
       .digest('hex').slice(0, 16);
     const buildDir = path.join(R(), 'builds', key);
     const gameDir = path.join(buildDir, 'game');
     const sig = modsSig(mods);
     const finish = () => {
-      fs.writeFileSync(statePath(), JSON.stringify({ key, tag, commit, sig, dir: gameDir, mods: mods.map((m) => m.id), builtAt: new Date().toISOString() }, null, 2));
+      fs.writeFileSync(statePath(), JSON.stringify({ key, tag, commit, sig, dir: gameDir, mods: metas.map((m) => m.id), builtAt: new Date().toISOString() }, null, 2));
       note('Игра собрана с нативными модами', 100);
       return { key, dir: gameDir };
     };
@@ -404,7 +537,7 @@ function create({ root, downloadFile, fetchJson, log, note }) {
     const logLine = (l) => { try { fs.appendFileSync(buildLog(), l + '\n'); } catch {} };
     // horizon-mixins читает cargo metadata без сети (--offline --locked), поэтому зависимости игры нужны заранее.
     note('Загрузка зависимостей Horizon (cargo fetch)…', 33);
-    const fr = await run(path.join(tc, 'bin', 'cargo.exe'), ['fetch', '--locked'], { env, cwd: src, onLine: logLine });
+    const fr = await run(path.join(tc, 'bin', 'cargo.exe'), ['fetch', '--locked', '--manifest-path', path.join(src, 'Cargo.toml')], { env, cwd: cargoCwd(), onLine: logLine });
     if (fr.code !== 0) throw new Error(`cargo fetch не удался:\n${fr.out}`);
     note('Применение модов к исходникам…', 35);
     const applyArgs = ['apply', '--workspace', src, '--mods', modsDir, '--out', outDir];
@@ -436,7 +569,11 @@ function create({ root, downloadFile, fetchJson, log, note }) {
     fs.rmSync(outDir, { recursive: true, force: true });
 
     note('Компиляция Horizon с модами (10–30 минут, окно можно не трогать)…', 36);
-    const target = path.join(R(), 'target', commit.slice(0, 12));
+    // Профиль `fast` (как в официальном лаунчере): те же оптимизации без LTO, сборка и пересборка в разы быстрее.
+    // Если в этой ревизии его нет, собираем `release`.
+    let profile = 'release';
+    try { if (/^\[profile\.fast\]/m.test(fs.readFileSync(path.join(stage, 'Cargo.toml'), 'utf8'))) profile = 'fast'; } catch {}
+    const target = path.join(R(), 'target', `${profile}-${commit.slice(0, 12)}`);
     let compiled = 0;
     // Фича `mods` нужна только если Horizon её объявляет: иначе cargo падает с «does not contain this feature».
     // Вставки horizon-mixins уже применены к исходникам, поэтому без фичи моды всё равно попадают в сборку.
@@ -451,13 +588,15 @@ function create({ root, downloadFile, fetchJson, log, note }) {
         if (section === 'features' && /^mods\s*=/.test(line)) hasModsFeature = true;
       }
     } catch {}
-    const cargoArgs = ['build', '--locked', '--profile', 'release'];
+    const cargoArgs = ['build', '--manifest-path', path.join(stage, 'Cargo.toml'), '--locked', '--profile', profile];
+    const srcConfig = path.join(stage, '.cargo', 'config.toml');
+    if (exists(srcConfig)) cargoArgs.push('--config', srcConfig);
     if (hasModsFeature) cargoArgs.push('--features', 'horizon-client/mods');
     cargoArgs.push('-p', 'horizon-client');
-    logLine(`[сборка] фича horizon-client/mods ${hasModsFeature ? 'есть, включаю' : 'не объявлена в Horizon, собираю без неё'}`);
+    logLine(`[сборка] профиль ${profile}; фича horizon-client/mods ${hasModsFeature ? 'есть, включаю' : 'не объявлена в Horizon, собираю без неё'}`);
     const cr = await run(path.join(tc, 'bin', 'cargo.exe'), cargoArgs,
       {
-        env: { ...env, CARGO_TARGET_DIR: target }, cwd: stage,
+        env: { ...env, CARGO_TARGET_DIR: target }, cwd: cargoCwd(),
         onLine: (l) => {
           logLine(l);
           const m = /^\s*(Compiling|Downloaded|Downloading)\s+(\S+)/.exec(l);
@@ -466,14 +605,14 @@ function create({ root, downloadFile, fetchJson, log, note }) {
           note(`${m[1] === 'Compiling' ? 'Компиляция' : 'Загрузка крейтов'}: ${m[2]} (${compiled})`, Math.min(95, 36 + Math.floor(compiled / 8)));
         },
       });
-    const exe = path.join(target, 'release', 'horizon-client.exe');
+    const exe = path.join(target, profile, 'horizon-client.exe');
     if (cr.code !== 0 || !exists(exe)) {
       const out = String(cr.out || '');
       const firstErr = (out.match(/^error(\[E\d+\])?: .*$/m) || ['сбой компиляции'])[0];
       const culprit = findCulpritMod(out, modsDir, src);
       const hint = culprit
         ? `\nВиноват мод «${culprit}»: его код не совпадает с этой версией Horizon. Его можно убрать и собрать игру снова.`
-        : `\nОшибка в коде Horizon с модами. Проверь моды в сборке: ${mods.map((m) => m.id).join(', ')}.`;
+        : `\nОшибка в коде Horizon с модами. Моды в сборке: ${metas.map((m) => m.id).join(', ')}. Если среди них есть привязанные к разным версиям Horizon, оставь только один набор.`;
       const err = new Error(`сборка не удалась (подробности в ${buildLog()}):\n${firstErr}${hint}\n\n${out}`);
       if (culprit) err.badMod = culprit;
       throw err;
@@ -484,14 +623,17 @@ function create({ root, downloadFile, fetchJson, log, note }) {
     fs.cpSync(versionDir, gameDir, { recursive: true, filter: (p) => !path.relative(versionDir, p).split(path.sep).includes('.local') });
     fs.copyFileSync(exe, path.join(gameDir, 'horizon-client.exe'));
     fs.rmSync(modsDir, { recursive: true, force: true });
-    // Старые сборки не нужны: игра играет только последнюю.
+    // Старые сборки не нужны: игра играет только последнюю. Старые папки target (по 2 ГБ каждая) тоже убираем.
     try {
       for (const d of fs.readdirSync(path.join(R(), 'builds'))) if (d !== key) fs.rmSync(path.join(R(), 'builds', d), { recursive: true, force: true });
+    } catch {}
+    try {
+      for (const d of fs.readdirSync(path.join(R(), 'target'))) if (d !== path.basename(target)) fs.rmSync(path.join(R(), 'target', d), { recursive: true, force: true });
     } catch {}
     return finish();
   }
 
-  return { build, current, readState, modsSig, logPath: buildLog };
+  return { build, plan, current, readState, modsSig, logPath: buildLog };
 }
 
-module.exports = { create, explainApplyError, readBundleMeta, extractBundle, syncTree, setRevision, RUST_VERSION };
+module.exports = { create, MIXINS_REV, isScrubbed, explainApplyError, readBundleMeta, extractBundle, syncTree, setRevision, RUST_VERSION };

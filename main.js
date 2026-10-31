@@ -62,6 +62,11 @@ function defaults() {
     showConsole: false,
     isolateBuilds: true,
     theme: 'green',
+    lastPage: 'home',
+    navMode: '',
+    hzKind: 'mod',
+    hzView: 'catalog',
+    hzSrc: 'horizon',
   };
 }
 
@@ -2500,7 +2505,14 @@ async function hzPlay() {
   const home = path.join(hzRoot(), 'game');
   fs.mkdirSync(home, { recursive: true });
   hzmSyncList();
-  const args = ['--resources', hzResources(dir, st.mc), '--game-dir', home, '--home', home];
+  // Нативные моды работают только в игре, собранной с ними (кнопка «Собрать игру с модами» во вкладке модов).
+  const nmods = hznNativeMods();
+  const built = nmods.length ? HZN.current(st.tag, nmods) : null;
+  // Обычный Horizon понимает --game-dir и --home. Собранная игра с нативными модами (Horizon 0.1.0 из ревизии модов)
+  // этих флагов не знает и падает с «unknown option --game-dir». Домашняя папка и так передаётся через cwd и HORIZON_HOME.
+  const args = built
+    ? ['--resources', hzResources(dir, st.mc)]
+    : ['--resources', hzResources(dir, st.mc), '--game-dir', home, '--home', home];
   const acc = cfg.accounts.find((a) => a.id === cfg.settings.activeAccount);
   if (acc && acc.type === 'offline') {
     args.push('--name', acc.name);
@@ -2514,9 +2526,6 @@ async function hzPlay() {
     args.push('--session-file', file);
     setTimeout(() => { try { fs.rmSync(file, { force: true }); } catch {} }, 60000);
   }
-  // Нативные моды работают только в игре, собранной с ними (кнопка «Собрать игру с модами» во вкладке модов).
-  const nmods = hznNativeMods();
-  const built = nmods.length ? HZN.current(st.tag, nmods) : null;
   if (nmods.length && !built) log('[horizon] Нативные моды установлены, но игра с ними не собрана: запускается обычный Horizon. Нажми «Собрать игру с модами».');
   else if (built) log(`[horizon] Запуск игры, собранной с нативными модами: ${nmods.map((m) => m.id).join(', ')}`);
   const exeDir = built ? built.dir : dir;
@@ -2600,7 +2609,8 @@ function hzmReadState() {
   try {
     const s = JSON.parse(fs.readFileSync(hzmStatePath(), 'utf8'));
     const installed = (Array.isArray(s.installed) ? s.installed : []).filter((m) => m && HZM.isValidId(m.id) && HZM.KINDS[m.kind]
-      && typeof m.file === 'string' && path.basename(m.file) === m.file && m.file.endsWith(HZM.KINDS[m.kind].ext));
+      && typeof m.file === 'string' && path.basename(m.file) === m.file
+      && (m.file.endsWith(HZM.KINDS[m.kind].ext) || (m.source === 'modrinth' && m.kind === 'shader' && m.file.endsWith('.zip'))));
     return { installed };
   } catch { return { installed: [] }; }
 }
@@ -2711,7 +2721,7 @@ function hzmInstalled() {
   const cached = hzmCached();
   let list = hzmReadList();
   return state.installed.map((m) => {
-    let enabled = m.kind === 'mod' ? HZM.isModOn(list, m.id) : null;
+    let enabled = m.kind === 'mod' ? HZM.isModOn(list, m.id) : (m.kind === 'native-mod' ? !m.nativeOff : null);
     const revoke = cached && (cached.index.revoked || []).find((r) => r && r.id === m.id && (!r.sha256 || r.sha256 === m.sha256));
     if (revoke && enabled) {
       list = HZM.setModLine(list, m.id, false);
@@ -2729,6 +2739,12 @@ function hzmInstalled() {
 function hzmToggle(id, on) {
   if (!HZM.isValidId(id)) throw new Error('Некорректный id мода.');
   const m = hzmReadState().installed.find((x) => x.id === id);
+  // Нативный мод: «выключить» значит не включать его в сборку игры (файл остаётся, модом можно вернуть).
+  if (m && m.kind === 'native-mod') {
+    const st0 = hzmReadState();
+    hzmWriteState({ installed: st0.installed.map((x) => (x.id === id ? { ...x, nativeOff: !on } : x)) });
+    return { ok: true };
+  }
   if (!m || m.kind !== 'mod') throw new Error('Этот мод не установлен лаунчером.');
   if (!fs.existsSync(hzmFilePath(m))) throw new Error('Файл мода пропал из папки игры. Установите мод заново.');
   hzmWriteList(HZM.setModLine(hzmReadList(), id, !!on));
@@ -2862,17 +2878,26 @@ async function hzmIconData(url) {
   return data;
 }
 
-async function hzmModrinthSearch(query) {
-  const facets = JSON.stringify([['project_type:resourcepack'], [`versions:${HZM.GAME_VERSION}`]]);
+// Что можно брать с Modrinth: ресурспаки (фильтр по 26.3) и шейдеры. Шейдерпаки на Modrinth почти никогда не помечены
+// версией 26.3, но Horizon читает их из папки shaderpacks как есть (BSL и другие работают), поэтому для шейдеров версию не фильтруем.
+const HZM_MR_KINDS = ['resourcepack', 'shader'];
+const hzmSafeFile = (name) => {
+  const base = String(name || '').replace(/[\\/]/g, '_').replace(/[^A-Za-z0-9._+\-]+/g, '_').replace(/^\.+/, '').slice(-120);
+  return /\.zip$/i.test(base) ? base.replace(/\.zip$/i, '.zip') : '';
+};
+
+async function hzmModrinthSearch(query, kindName) {
+  const type = HZM_MR_KINDS.includes(kindName) ? kindName : 'resourcepack';
+  const facets = JSON.stringify(type === 'shader' ? [['project_type:shader']] : [['project_type:resourcepack'], [`versions:${HZM.GAME_VERSION}`]]);
   const q = String(query || '').trim().slice(0, 80);
-  const url = `${HZM_MR}/search?query=${encodeURIComponent(q)}&facets=${encodeURIComponent(facets)}&index=downloads&limit=30`;
+  const url = `${HZM_MR}/search?query=${encodeURIComponent(q)}&facets=${encodeURIComponent(facets)}&index=${q ? 'relevance' : 'downloads'}&limit=30`;
   const r = await fetchJson(url);
   const state = hzmReadState();
   const hits = (Array.isArray(r.hits) ? r.hits : []).filter((h) => h && typeof h.project_id === 'string' && /^[A-Za-z0-9]{1,40}$/.test(h.project_id));
   return Promise.all(hits.map(async (h) => {
     const id = hzmMrId(h.project_id);
     return {
-      id, kind: 'resourcepack', source: 'modrinth', name: String(h.title || h.slug || '').slice(0, 120),
+      id, kind: type, source: 'modrinth', name: String(h.title || h.slug || '').slice(0, 120),
       summary: String(h.description || '').slice(0, 200), authors: String(h.author || ''), license: String(h.license || ''),
       downloads: Number(h.downloads) || 0, version: '', published: String(h.date_modified || ''), signed: false,
       icon: await hzmIconData(h.icon_url), installed: state.installed.some((m) => m.id === id) ? 'current' : '',
@@ -2886,22 +2911,34 @@ async function hzmInstallModrinth(projectId) {
   const state = hzmReadState();
   const prev = state.installed.find((m) => m.id === id);
   const project = await fetchJson(`${HZM_MR}/project/${projectId}`);
-  const versions = await fetchJson(`${HZM_MR}/project/${projectId}/version?game_versions=${encodeURIComponent(JSON.stringify([HZM.GAME_VERSION]))}`);
-  const v = (Array.isArray(versions) ? versions : []).find((x) => x && Array.isArray(x.game_versions) && x.game_versions.includes(HZM.GAME_VERSION));
-  if (!v) throw new Error(`Нет версии для Minecraft ${HZM.GAME_VERSION}.`);
-  const f = (v.files || []).find((x) => x && x.primary) || (v.files || [])[0];
-  const kind = HZM.KINDS.resourcepack;
-  if (!f || !/^https:\/\/cdn\.modrinth\.com\//.test(f.url || '') || !/^[A-Za-z0-9._+\-]{1,120}\.zip$/.test(f.filename || '')) {
-    throw new Error('У версии нет подходящего файла.');
+  const kindName = project && project.project_type;
+  if (!HZM_MR_KINDS.includes(kindName)) throw new Error('Horizon ставит с Modrinth только ресурспаки и шейдеры: Java-моды он не запускает.');
+  const kind = HZM.KINDS[kindName];
+  let versions;
+  let v;
+  if (kindName === 'shader') {
+    versions = await fetchJson(`${HZM_MR}/project/${projectId}/version`);
+    const list = (Array.isArray(versions) ? versions : []).filter((x) => x && Array.isArray(x.files) && x.files.length);
+    // Сначала версия, помеченная под 26.3, иначе самая новая: шейдерпак не зависит от версии игры так жёстко, как мод.
+    v = list.find((x) => Array.isArray(x.game_versions) && x.game_versions.includes(HZM.GAME_VERSION)) || list[0];
+    if (!v) throw new Error('У шейдера нет ни одной версии с файлом.');
+  } else {
+    versions = await fetchJson(`${HZM_MR}/project/${projectId}/version?game_versions=${encodeURIComponent(JSON.stringify([HZM.GAME_VERSION]))}`);
+    v = (Array.isArray(versions) ? versions : []).find((x) => x && Array.isArray(x.game_versions) && x.game_versions.includes(HZM.GAME_VERSION));
+    if (!v) throw new Error(`Нет версии для Minecraft ${HZM.GAME_VERSION}.`);
   }
+  const files = (v.files || []).filter((x) => x && /^https:\/\/cdn\.modrinth\.com\//.test(x.url || '') && /\.zip$/i.test(x.filename || ''));
+  const f = files.find((x) => x.primary) || files[0];
+  if (!f) throw new Error('У версии нет подходящего .zip файла.');
   const sha512 = f.hashes && f.hashes.sha512;
   if (!/^[0-9a-f]{128}$/.test(sha512 || '')) throw new Error('У файла нет контрольной суммы SHA-512.');
-  const fileName = f.filename;
+  const fileName = hzmSafeFile(f.filename);
+  if (!fileName) throw new Error('У файла странное имя.');
   const dest = path.join(hzmGame(), kind.dir, fileName);
-  if (state.installed.some((m) => m.id !== id && m.kind === 'resourcepack' && m.file === fileName)) {
+  if (state.installed.some((m) => m.id !== id && m.kind === kindName && m.file === fileName)) {
     throw new Error(`Файл ${fileName} уже занят другим установленным пакетом.`);
   }
-  if (!prev && fs.existsSync(dest)) throw new Error(`В папке игры уже лежит ${fileName}, его поставили не через лаунчер.`);
+  if (!prev && fs.existsSync(dest)) throw new Error(`В папке игры уже лежит ${fileName}, его поставили не через лаунчер. Удали или переименуй его.`);
   const name = String(project.title || fileName).slice(0, 120);
   const tmp = path.join(hzRoot(), 'downloads', `${id}-${String(v.version_number || 'v').replace(/[^A-Za-z0-9._+-]/g, '_')}.zip`);
   try {
@@ -2910,17 +2947,18 @@ async function hzmInstallModrinth(projectId) {
       label: name, expectedSize: Number(f.size) || 0, expectedHash: sha512, hashType: 'sha512', minSize: 1,
       checkZip: true, progressChannel: 'hzm:progress', timeout: 10 * 60 * 1000,
     });
-    HZM.checkResourcePack(fs.readFileSync(tmp));
+    const data = fs.readFileSync(tmp);
+    if (kindName === 'shader') HZM.checkShaderPack(data); else HZM.checkResourcePack(data);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.rmSync(dest, { force: true });
     fs.copyFileSync(tmp, dest);
     if (prev && prev.file !== fileName) fs.rmSync(path.join(hzmGame(), kind.dir, prev.file), { force: true });
     const record = {
-      id, kind: 'resourcepack', source: 'modrinth', name, version: String(v.version_number || ''), file: fileName,
+      id, kind: kindName, source: 'modrinth', name, version: String(v.version_number || ''), file: fileName,
       sha256: '', sha512, projectId, installedAt: new Date().toISOString(),
     };
     hzmWriteState({ installed: [...state.installed.filter((m) => m.id !== id), record] });
-    log(`[horizon-mods] установлен ${name} с Modrinth (${fileName})`);
+    log(`[horizon-mods] установлен ${kindName === 'shader' ? 'шейдер' : 'ресурспак'} ${name} с Modrinth (${fileName})`);
     hzmProgress(`${name} установлен`, 100);
     return { ok: true, item: record };
   } catch (e) {
@@ -2953,8 +2991,8 @@ ipcMain.handle('hzm:install', hzmGuard((_e, id) => {
   const run = id && String(id).startsWith('mr_') ? hzmInstallModrinth(String(id).slice(3)) : hzmInstall(id);
   return run.then((r) => ({ ...r, items: hzmInstalled() }));
 }));
-ipcMain.handle('hzm:modrinth', async (_e, query) => {
-  try { return { ok: true, items: await hzmModrinthSearch(query) }; }
+ipcMain.handle('hzm:modrinth', async (_e, query, kind) => {
+  try { return { ok: true, items: await hzmModrinthSearch(query, kind) }; }
   catch (e) { return { ok: false, error: `Не удалось поискать на Modrinth: ${(e && e.message) || e}` }; }
 });
 ipcMain.handle('hzm:remove', hzmGuard((_e, id) => ({ ...hzmRemove(id), items: hzmInstalled() })));
@@ -2980,33 +3018,63 @@ const HZN = require('./horizon-native').create({
   downloadFile, fetchJson, log, note: (label, pct) => hzmProgress(label, pct),
 });
 let hznBusy = false;
+// Нативные моды, которые идут в сборку: исключённые вручную (nativeOff) и те, что не подошли набору, не считаются.
+function hznAllNative() {
+  return hzmReadState().installed.filter((m) => m.kind === 'native-mod' && fs.existsSync(hzmFilePath(m)));
+}
 function hznNativeMods() {
-  return hzmReadState().installed
-    .filter((m) => m.kind === 'native-mod' && fs.existsSync(hzmFilePath(m)))
+  return hznAllNative().filter((m) => !m.nativeOff)
     .map((m) => ({ id: m.id, file: hzmFilePath(m), sha256: m.sha256 || '' }));
 }
 function hznStatus() {
   const st = hzStatus();
   const mods = hznNativeMods();
+  const off = hznAllNative().filter((m) => m.nativeOff).map((m) => m.id);
   const cur = st.tag && mods.length ? HZN.current(st.tag, mods) : null;
-  return { supported: process.platform === 'win32' && process.arch === 'x64', mods: mods.map((m) => m.id), built: !!cur, busy: hznBusy, installedGame: !!st.tag, running: st.running };
+  return { supported: process.platform === 'win32' && process.arch === 'x64', mods: mods.map((m) => m.id), off, built: !!cur, busy: hznBusy, installedGame: !!st.tag, running: st.running };
 }
+const hznNames = () => Object.fromEntries(hznAllNative().map((m) => [m.id, m.name || m.id]));
 ipcMain.handle('hzn:status', () => hznStatus());
-ipcMain.handle('hzn:build', async (_e, force) => {
+
+// Предпросмотр: можно ли собрать выбранные моды вместе. Если они привязаны к разным коммитам Horizon, вернёт группы.
+ipcMain.handle('hzn:plan', async () => {
+  const st = hzStatus();
+  if (!st.tag) return { ok: false, error: 'Сначала установи Horizon.' };
+  const mods = hznNativeMods();
+  if (!mods.length) return { ok: false, error: 'Нативные моды не установлены или все выключены.' };
+  try {
+    const p = await HZN.plan({ tag: st.tag, mods });
+    const names = hznNames();
+    return { ok: true, conflict: p.conflict, names, groups: p.groups, hooks: p.hooks };
+  } catch (e) {
+    log(`[horizon-native] Проверка модов: ${e && e.message ? e.message : e}`);
+    return { ok: false, error: String((e && e.message) || e).slice(0, 800) };
+  }
+});
+// Какие нативные моды входят в сборку (остальные остаются установленными, но в игру не собираются).
+ipcMain.handle('hzn:select', hzmGuard((_e, ids) => {
+  const keep = new Set(Array.isArray(ids) ? ids.map(String) : []);
+  const st = hzmReadState();
+  hzmWriteState({ installed: st.installed.map((m) => (m.kind === 'native-mod' ? { ...m, nativeOff: !keep.has(m.id) } : m)) });
+  return { ok: true, items: hzmInstalled(), status: hznStatus() };
+}));
+ipcMain.handle('hzn:build', async (_e, opts) => {
+  const o = opts && typeof opts === 'object' ? opts : { force: !!opts };
   if (hznBusy) return { ok: false, error: 'Сборка уже идёт.' };
   if (hzProc) return { ok: false, error: 'Закрой Horizon: игру нельзя пересобирать, пока она запущена.' };
   const st = hzStatus();
   if (!st.tag) return { ok: false, error: 'Сначала установи Horizon.' };
   const mods = hznNativeMods();
-  if (!mods.length) return { ok: false, error: 'Нативные моды не установлены.' };
+  if (!mods.length) return { ok: false, error: 'Нативные моды не установлены или все выключены.' };
   hznBusy = true;
   try {
-    await HZN.build({ tag: st.tag, versionDir: hzDir(st.tag), mods, force: !!force });
+    await HZN.build({ tag: st.tag, versionDir: hzDir(st.tag), mods, force: !!o.force, allowMismatch: !!o.allowMismatch });
     log('[horizon-native] Игра собрана с нативными модами');
     return { ok: true, status: hznStatus() };
   } catch (e) {
     log(`[horizon-native] Ошибка: ${e && e.message ? e.message : e}`);
-    return { ok: false, error: String((e && e.message) || e).slice(0, 1500), logPath: HZN.logPath(), badMod: (e && e.badMod) || '' };
+    const conflict = e && e.conflict ? { ...e.conflict, names: hznNames() } : null;
+    return { ok: false, error: String((e && e.message) || e).slice(0, 1500), logPath: HZN.logPath(), badMod: (e && e.badMod) || '', conflict };
   } finally { hznBusy = false; }
 });
 ipcMain.handle('hzn:openLog', () => { const p = HZN.logPath(); return fs.existsSync(p) ? shell.showItemInFolder(p) : { ok: false }; });

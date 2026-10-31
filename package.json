@@ -1,6 +1,6 @@
 {
   "name": "my-mc-launcher",
-  "version": "1.16.5",
+  "version": "1.17.0",
   "description": "Свой лаунчер Minecraft Java Edition",
   "main": "main.js",
   "scripts": {

@@ -163,6 +163,14 @@ function checkResourcePack(buf) {
   if (!zip.getEntry('pack.mcmeta')) throw new Error('в архиве нет pack.mcmeta');
 }
 
+// Шейдерпак (zip, формат Iris/OptiFine): внутри должна быть папка shaders/ (в корне или в одной вложенной папке).
+function checkShaderPack(buf) {
+  let zip;
+  try { zip = new AdmZip(buf); } catch { throw new Error('файл не похож на шейдерпак (не архив)'); }
+  const has = zip.getEntries().some((e) => /^(?:[^/]+\/)?shaders\//.test(e.entryName));
+  if (!has) throw new Error('в архиве нет папки shaders: это не шейдерпак');
+}
+
 // Строки mod.<id>:true|false в horizon-mods.txt, остальные строки (ключи модов и т.д.) не трогаем.
 function modLines(text) {
   return String(text || '').split(/\r?\n/).filter((l) => l.trim() !== '');
@@ -193,6 +201,7 @@ module.exports = {
   readModManifest,
   readNativeManifest,
   checkResourcePack,
+  checkShaderPack,
   setModLine,
   removeModLine,
   isModOn,
