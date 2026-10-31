@@ -1,4 +1,4 @@
-🌐 **Сайт:** https://ksefr1k.github.io/Electron-site/
+🌐 **Сайт:** https://ksefr1k.github.io/Electron/
 
 ⬇️ **Скачать установщик:** [последний релиз](https://github.com/Ksefr1k/Electron/releases/latest)
 
