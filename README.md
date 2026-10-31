@@ -1,3 +1,7 @@
+🌐 **Сайт:** https://ksefr1k.github.io/Electron-site/
+
+⬇️ **Скачать установщик:** [последний релиз](https://github.com/Ksefr1k/Electron/releases/latest)
+
 Use ai claude
 # Electron — Minecraft Java launcher
 
