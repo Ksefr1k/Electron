@@ -1,3 +1,4 @@
+Use ai claude
 # Electron — Minecraft Java launcher
 
 Кастомный лаунчер Minecraft Java Edition с настраиваемыми темами, каталогом модов Modrinth, версиями Minecraft, Microsoft/офлайн-аккаунтами, скинами и автоматической установкой Java и загрузчиков Fabric, Forge, NeoForge и Quilt.
